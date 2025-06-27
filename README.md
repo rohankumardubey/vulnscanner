@@ -12,11 +12,11 @@ A lightweight CLI tool written in Go for scanning Java (Maven) and Go (modules) 
 * **Color-coded output**:
 
   * **CVE identifiers** in blue and bold.
-  * **High-severity** (CVSS ≥ 9.0) in red bold.
-  * **Medium-severity** (7.0 ≤ CVSS < 9.0) in red.
-  * **Low-severity** (CVSS ≥ 4.0) in yellow.
+  * **High-severity** (CVSS ≥ 9.0) in red bold.
+  * **Medium-severity** (7.0 ≤ CVSS < 9.0) in red.
+  * **Low-severity** (CVSS ≥ 4.0) in yellow.
   * **Suggested fixes** in yellow.
-* **Clickable links**: Reference hyperlinks use OSC 8 escape sequences ("View Details").
+* **Clickable links**: Reference hyperlinks use OSC 8 escape sequences (`View Details`).
 * **Upgrade hints**: Parses vulnerability descriptions for "fixed in" or "upgrade to" suggestions.
 * **Customizable width**: Adjust the box width constant to match your terminal.
 
@@ -75,7 +75,7 @@ Summary: 1 dependencies affected, 1 vulnerability found.
 
 ## Configuration
 
-* **Box width**: Modify the `width` constant in `printVulnBox` to fit your terminal width.
+* **Box width**: Modify the `width` constant in `printVulnBox` to fit your terminal.
 * **API URL**: Change `ossIndexURL` to point to a different feed or local mirror if needed.
 
 ---

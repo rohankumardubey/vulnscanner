@@ -18,28 +18,17 @@ import (
 
 const ossIndexURL = "https://ossindex.sonatype.org/api/v3/component-report"
 
-// Box drawing characters
-const (
-    hLine  = "─"
-    vLine  = "│"
-    tl     = "┌"
-    tr     = "┐"
-    bl     = "└"
-    br     = "┘"
-    lJoint = "├"
-    rJoint = "┤"
-)
-
-// ANSI colors
+// ── ANSI Colors ────────────────────────────────────────────────
 var (
-    Red    = "\033[31m"
-    Yellow = "\033[33m"
-    Cyan   = "\033[36m"
-    Reset  = "\033[0m"
-    Bold   = "\033[1m"
+    ColorReset = "\033[0m"
+    ColorBold  = "\033[1m"
+    ColorRed   = "\033[31m"
+    ColorYel   = "\033[33m"
+    ColorBlu   = "\033[34m"
 )
 
-// Types
+// ── Types ──────────────────────────────────────────────────────
+
 type OSSIndexRequest struct {
     Coordinates []string `json:"coordinates"`
 }
@@ -58,21 +47,30 @@ type OSSIndexResponse struct {
     Vulnerabilities []Vulnerability `json:"vulnerabilities"`
 }
 
-// Color helpers
-func severityColor(score float64) string {
-    switch {
-    case score >= 9:
-        return Red + Bold
-    case score >= 7:
-        return Red
-    case score >= 4:
-        return Yellow
-    default:
-        return Reset
+// ── Table‐Drawing Helpers ─────────────────────────────────────
+
+func printTableLine(kind string, widths []int) {
+    var left, sep, mid, right string
+    switch kind {
+    case "top":
+        left, sep, mid, right = "┌", "┬", "─", "┐"
+    case "mid":
+        left, sep, mid, right = "├", "┼", "─", "┤"
+    case "bot":
+        left, sep, mid, right = "└", "┴", "─", "┘"
     }
+    fmt.Print(left)
+    for i, w := range widths {
+        for j := 0; j < w+2; j++ {
+            fmt.Print(mid)
+        }
+        if i < len(widths)-1 {
+            fmt.Print(sep)
+        }
+    }
+    fmt.Println(right)
 }
 
-// Wrap a string into lines of max width (word boundaries)
 func wrapText(s string, width int) []string {
     var lines []string
     words := strings.Fields(s)
@@ -80,284 +78,249 @@ func wrapText(s string, width int) []string {
         return []string{""}
     }
     line := words[0]
-    for _, word := range words[1:] {
-        if utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) > width {
+    for _, w := range words[1:] {
+        if utf8.RuneCountInString(line)+1+utf8.RuneCountInString(w) > width {
             lines = append(lines, line)
-            line = word
+            line = w
         } else {
-            line += " " + word
+            line += " " + w
         }
     }
     lines = append(lines, line)
     return lines
 }
 
-// Print horizontal line for box
-func printHLine(width int) {
-    fmt.Print(tl)
-    for i := 0; i < width; i++ {
-        fmt.Print(hLine)
+func truncate(s string, max int) string {
+    if len(s) > max {
+        return s[:max-3] + "..."
     }
-    fmt.Println(tr)
+    return s
 }
 
-// Print bottom line for box
-func printBLine(width int) {
-    fmt.Print(bl)
-    for i := 0; i < width; i++ {
-        fmt.Print(hLine)
-    }
-    fmt.Println(br)
+func extractCWE(title string) string {
+    re := regexp.MustCompile(`CWE-\d+`)
+    return re.FindString(title)
 }
 
-// Print horizontal separator between vulnerabilities
-func printInnerHLine(width int) {
-    fmt.Printf("%s%s%s\n", lJoint, strings.Repeat(hLine, width), rJoint)
+// hyperlink makes text clickable in supporting terminals via OSC 8
+func hyperlink(text, url string) string {
+    return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
-// Print a label/value row, with wrapping
-func printRowContent(width int, label, value, color string) {
-    wrapWidth := width - len(label) - 7 // 7: box, label padding, separator, space
-    wrapped := wrapText(value, wrapWidth)
-    for i, line := range wrapped {
-        if i == 0 {
-            fmt.Printf("%s   %s%s%-14s%s %s%s %s\n", vLine, Bold, color, label, Reset, line, Reset, vLine)
-        } else {
-            fmt.Printf("%s   %-16s %s%s %s\n", vLine, "", line, Reset, vLine)
-        }
-    }
-}
-
-// Try to extract upgrade suggestion from description text
+// extractUpgradeSuggestion tries to pull a "fix" hint from the description
 func extractUpgradeSuggestion(desc string) string {
     lower := strings.ToLower(desc)
-    patterns := []string{"upgrade to version ", "upgrade to ", "fixed in ", "update to version ", "use version "}
-    for _, p := range patterns {
-        idx := strings.Index(lower, p)
-        if idx != -1 {
+    for _, p := range []string{
+        "upgrade to version ", "fixed in ", "update to version ", "use version ",
+    } {
+        if idx := strings.Index(lower, p); idx != -1 {
             after := lower[idx+len(p):]
-            words := strings.Fields(after)
-            if len(words) > 0 {
-                return "Upgrade to version " + words[0]
+            parts := strings.Fields(after)
+            if len(parts) > 0 {
+                return "Upgrade to " + parts[0]
             }
         }
     }
     return ""
 }
 
-// Truncate long description for consistent appearance
-func truncate(s string, l int) string {
-    if len(s) > l {
-        return s[:l] + "..."
+// Severity coloring based on CVSS
+func severityColor(score float64) string {
+    switch {
+    case score >= 9.0:
+        return ColorRed + ColorBold
+    case score >= 7.0:
+        return ColorRed
+    case score >= 4.0:
+        return ColorYel
+    default:
+        return ColorReset
     }
-    return s
 }
 
-// Print a vulnerability box for one dependency
-func printVulnBox(dep string, vulns []Vulnerability) {
-    width := 100 // You can adjust this to your terminal width
-    printHLine(width)
-    depLines := wrapText(dep, width-2)
-    for _, l := range depLines {
-        fmt.Printf("%s %-*s %s\n", vLine, width-2, Cyan+l+Reset, vLine)
-    }
-    printInnerHLine(width)
-    for idx, v := range vulns {
-        sevCol := severityColor(v.CVSSScore)
-        // Remove duplicate CVE in the title if present
-        cve := v.CVE
-        title := v.Title
-        if cve != "" && strings.Contains(title, cve) {
-            title = strings.Replace(title, cve, "", 1)
-            title = strings.TrimSpace(title)
-            title = strings.TrimLeft(title, "[] ")
+// ── Print One Dependency’s Vulnerabilities as Table ───────────
+
+func printVulnTable(dep string, vulns []Vulnerability) {
+    // Column widths: CVE, Severity, CWE, Description, Suggested Fix
+    widths := []int{18, 9, 10, 40, 20}
+
+    // Header
+    fmt.Printf("\n%sDependency:%s %s\n\n", ColorBold, ColorReset, dep)
+    printTableLine("top", widths)
+    fmt.Printf(
+        "%s│ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │%s\n",
+        ColorBold,
+        widths[0], "CVE",
+        widths[1], "Severity",
+        widths[2], "CWE",
+        widths[3], "Description",
+        widths[4], "Suggested Fix",
+        ColorReset,
+    )
+    printTableLine("mid", widths)
+
+    // Rows
+    for i, v := range vulns {
+        cwe := extractCWE(v.Title)
+        fix := extractUpgradeSuggestion(v.Description)
+        if fix == "" {
+            // clickable "Check reference URL"
+            fix = hyperlink("Check reference URL", v.Reference)
         }
-        // Compose vulnerability heading
-        var vulnHeader string
-        if cve != "" {
-            vulnHeader = fmt.Sprintf("[%s] %s", cve, title)
-        } else {
-            vulnHeader = title
-        }
-        // Vulnerability header row (wraps if too long)
-        headerLines := wrapText(vulnHeader, width-8)
-        for i, hl := range headerLines {
-            if i == 0 {
-                fmt.Printf("%s • %s%s%s%s %s\n", vLine, Bold, hl, Reset, Reset, vLine)
+        desc := truncate(v.Description, widths[3])
+
+        // Wrap description into lines
+        descLines := wrapText(desc, widths[3])
+        for j, dl := range descLines {
+            if j == 0 {
+                fmt.Printf(
+                    "│ %s%-*s%s │ %s%-*.1f%s │ %-*s │ %-*s │ %s%-*s%s │\n",
+                    ColorBlu+ColorBold, widths[0], v.CVE, ColorReset,
+                    severityColor(v.CVSSScore), widths[1], v.CVSSScore, ColorReset,
+                    widths[2], cwe,
+                    widths[3], dl,
+                    ColorYel, widths[4], fix, ColorReset,
+                )
             } else {
-                fmt.Printf("%s   %s%s%s %s\n", vLine, Bold, hl, Reset, vLine)
+                // subsequent lines continue only in Description column
+                fmt.Printf(
+                    "│ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │\n",
+                    widths[0], "",
+                    widths[1], "",
+                    widths[2], "",
+                    widths[3], dl,
+                    widths[4], "",
+                )
             }
         }
-        // Severity
-        printRowContent(width, "Severity:", fmt.Sprintf("%.1f", v.CVSSScore), sevCol)
-        // Description
-        printRowContent(width, "Description:", truncate(v.Description, 200), "")
-        // Reference
-        printRowContent(width, "Reference:", v.Reference, "")
-        // Suggested Fix
-        suggestion := extractUpgradeSuggestion(v.Description)
-        if suggestion != "" {
-            printRowContent(width, "Suggested Fix:", suggestion, "")
-        } else {
-            printRowContent(width, "Suggested Fix:", "Check latest version at reference URL.", "")
-        }
-        if idx != len(vulns)-1 {
-            printInnerHLine(width)
+
+        if i < len(vulns)-1 {
+            printTableLine("mid", widths)
         }
     }
-    printBLine(width)
+    printTableLine("bot", widths)
 }
 
-// Parse go.mod for dependencies
-func parseGoMod(goModPath string) ([]string, error) {
-    f, err := os.Open(goModPath)
+// ── Parsers ───────────────────────────────────────────────────
+
+func parseGoMod(path string) ([]string, error) {
+    f, err := os.Open(path)
     if err != nil {
         return nil, err
     }
     defer f.Close()
 
-    var pkgs []string
+    var coords []string
     scanner := bufio.NewScanner(f)
-    depPattern := regexp.MustCompile(`^\s*([^\s]+)\s+v([0-9A-Za-z\.\-\+]+)`)
-    inRequireBlock := false
+    re := regexp.MustCompile(`^\s*([^\s]+)\s+v([0-9A-Za-z\.\-\+]+)`)
+    inBlock := false
 
     for scanner.Scan() {
         line := scanner.Text()
         if strings.HasPrefix(line, "require (") {
-            inRequireBlock = true
+            inBlock = true
             continue
         }
-        if inRequireBlock && strings.HasPrefix(line, ")") {
-            inRequireBlock = false
+        if inBlock && strings.HasPrefix(line, ")") {
+            inBlock = false
             continue
         }
-
-        if inRequireBlock || strings.HasPrefix(line, "require") {
-            matches := depPattern.FindStringSubmatch(line)
-            if len(matches) == 3 {
-                mod := matches[1]
-                version := matches[2]
-                pkgs = append(pkgs, fmt.Sprintf("pkg:golang/%s@v%s", mod, version))
+        if inBlock || strings.HasPrefix(line, "require") {
+            if m := re.FindStringSubmatch(line); len(m) == 3 {
+                coords = append(coords,
+                    fmt.Sprintf("pkg:golang/%s@v%s", m[1], m[2]),
+                )
             }
         }
     }
-    return pkgs, nil
+    return coords, nil
 }
 
-// Parse pom.xml for Maven dependencies
-func parsePomXML(pomPath string) ([]string, error) {
+func parsePomXML(path string) ([]string, error) {
     doc := etree.NewDocument()
-    if err := doc.ReadFromFile(pomPath); err != nil {
+    if err := doc.ReadFromFile(path); err != nil {
         return nil, err
     }
-
-    var pkgs []string
-    dependencies := doc.FindElements("//project/dependencies/dependency")
-    for _, dep := range dependencies {
-        group := dep.SelectElement("groupId")
-        artifact := dep.SelectElement("artifactId")
-        version := dep.SelectElement("version")
-        if group != nil && artifact != nil && version != nil {
-            pkgs = append(pkgs, fmt.Sprintf("pkg:maven/%s/%s@%s", group.Text(), artifact.Text(), version.Text()))
+    var coords []string
+    for _, dep := range doc.FindElements("//project/dependencies/dependency") {
+        g := dep.SelectElement("groupId")
+        a := dep.SelectElement("artifactId")
+        v := dep.SelectElement("version")
+        if g != nil && a != nil && v != nil {
+            coords = append(coords,
+                fmt.Sprintf("pkg:maven/%s/%s@%s", g.Text(), a.Text(), v.Text()),
+            )
         }
     }
-    return pkgs, nil
+    return coords, nil
 }
 
-// Query OSS Index for vulnerabilities
+// ── OSS Index Call ────────────────────────────────────────────
+
 func checkVulnerabilities(coords []string) ([]OSSIndexResponse, error) {
-    reqBody, err := json.Marshal(OSSIndexRequest{Coordinates: coords})
-    if err != nil {
-        return nil, err
-    }
-    resp, err := http.Post(ossIndexURL, "application/json", bytes.NewBuffer(reqBody))
+    body, _ := json.Marshal(OSSIndexRequest{Coordinates: coords})
+    resp, err := http.Post(ossIndexURL, "application/json", bytes.NewBuffer(body))
     if err != nil {
         return nil, err
     }
     defer resp.Body.Close()
+    data, _ := ioutil.ReadAll(resp.Body)
 
-    body, err := ioutil.ReadAll(resp.Body)
-    if err != nil {
+    var out []OSSIndexResponse
+    if err := json.Unmarshal(data, &out); err != nil {
         return nil, err
     }
-    var result []OSSIndexResponse
-    err = json.Unmarshal(body, &result)
-    if err != nil {
-        return nil, err
-    }
-    return result, nil
+    return out, nil
 }
 
-// Print overall report
-func printReport(results []OSSIndexResponse) {
-    vulnCount := 0
-    depCount := 0
+// ── Main ─────────────────────────────────────────────────────
 
-    for _, r := range results {
-        if len(r.Vulnerabilities) > 0 {
-            depCount++
-            printVulnBox(r.Coordinates, r.Vulnerabilities)
-            vulnCount += len(r.Vulnerabilities)
-        }
-    }
-    if vulnCount == 0 {
-        fmt.Println(Cyan + "No known vulnerabilities found!" + Reset)
-    } else {
-        fmt.Printf("%sSummary:%s %d dependencies affected, %d vulnerabilities found.\n\n",
-            Bold, Reset, depCount, vulnCount)
-    }
-}
-
-// Entry point
 func main() {
-    if len(os.Args) < 3 {
-        fmt.Println("Usage: vulnscanner <language> <path_to_project>")
-        fmt.Println("Example for Go: vulnscanner go /path/to/project")
-        fmt.Println("Example for Java: vulnscanner java /path/to/project")
+    if len(os.Args) != 3 {
+        fmt.Println("Usage: vulnscanner [go|java] /path/to/project")
         os.Exit(1)
     }
+    lang, path := os.Args[1], os.Args[2]
 
-    lang := strings.ToLower(os.Args[1])
-    path := os.Args[2]
-    var pkgs []string
+    var coords []string
     var err error
-
     switch lang {
     case "go":
-        goModPath := filepath.Join(path, "go.mod")
-        if _, err = os.Stat(goModPath); os.IsNotExist(err) {
-            fmt.Println("go.mod not found in the specified path.")
-            os.Exit(1)
-        }
-        fmt.Println("Parsing go.mod...")
-        pkgs, err = parseGoMod(goModPath)
+        coords, err = parseGoMod(filepath.Join(path, "go.mod"))
     case "java":
-        pomPath := filepath.Join(path, "pom.xml")
-        if _, err = os.Stat(pomPath); os.IsNotExist(err) {
-            fmt.Println("pom.xml not found in the specified path.")
-            os.Exit(1)
-        }
-        fmt.Println("Parsing pom.xml...")
-        pkgs, err = parsePomXML(pomPath)
+        coords, err = parsePomXML(filepath.Join(path, "pom.xml"))
     default:
         fmt.Println("Supported languages: go, java")
         os.Exit(1)
     }
-
     if err != nil {
-        fmt.Printf("Error parsing dependencies: %v\n", err)
+        fmt.Fprintln(os.Stderr, "Error parsing:", err)
         os.Exit(1)
     }
-    if len(pkgs) == 0 {
+    if len(coords) == 0 {
         fmt.Println("No dependencies found.")
         os.Exit(0)
     }
 
-    fmt.Printf("Found %d dependencies. Checking vulnerabilities...\n", len(pkgs))
-    results, err := checkVulnerabilities(pkgs)
+    fmt.Printf("%sParsing %s → found %d dependencies. Querying vulnerabilities…%s\n\n", ColorBold, lang, len(coords), ColorReset)
+    results, err := checkVulnerabilities(coords)
     if err != nil {
-        fmt.Printf("Error querying vulnerabilities: %v\n", err)
+        fmt.Fprintln(os.Stderr, "Error fetching vulnerabilities:", err)
         os.Exit(1)
     }
-    printReport(results)
+
+    totalDeps, totalVulns := 0, 0
+    for _, r := range results {
+        if len(r.Vulnerabilities) > 0 {
+            totalDeps++
+            printVulnTable(r.Coordinates, r.Vulnerabilities)
+            totalVulns += len(r.Vulnerabilities)
+        }
+    }
+    if totalVulns == 0 {
+        fmt.Println("✅ No known vulnerabilities found!")
+    } else {
+        fmt.Printf("\nSummary: %d dependencies affected, %d vulnerabilities found.\n",
+            totalDeps, totalVulns)
+    }
 }
