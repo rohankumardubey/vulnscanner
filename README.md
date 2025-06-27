@@ -1,6 +1,6 @@
 # vulnscanner
 
-A lightweight CLI tool written in Go for scanning Java (Maven) and Go (modules) project dependencies against the OSS Index vulnerability database. Outputs a clean, colorized ASCII box report with clickable links, severity-based coloring, and upgrade suggestions.
+A lightweight CLI tool written in Go for scanning Java (Maven) and Go (modules) project dependencies against the OSS Index vulnerability database. Outputs a clean, colourised ASCII box report with clickable links, severity-based colouring, and upgrade suggestions.
 
 ---
 
@@ -27,7 +27,7 @@ A lightweight CLI tool written in Go for scanning Java (Maven) and Go (modules) 
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/your-username/vulnscanner.git
+   git clone https://github.com/rohankumardubey/vulnscanner.git
    cd vulnscanner
    ```
 2. **Install dependencies**
@@ -56,7 +56,7 @@ A lightweight CLI tool written in Go for scanning Java (Maven) and Go (modules) 
 ### Sample Output
 
 ```bash
-Parsing java → found 5 dependencies. Checking vulnerabilities...
+Parsing Java → found 5 dependencies. Checking vulnerabilities...
 
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
 │ pkg:maven/org.apache.kafka/kafka-clients@3.8.0                                             │
