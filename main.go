@@ -122,9 +122,22 @@ func printVulnBox(dep string, vulns []Vulnerability) {
     fmt.Printf("%s%s%s\n", lJoint, strings.Repeat(hLine, width), rJoint)
     for _, v := range vulns {
         sevCol := severityColor(v.CVSSScore)
-        // Title, Severity, CVE on one line
-        title := fmt.Sprintf("[%-14s] %-44s", v.CVE, v.Title)
-        fmt.Printf("%s %s• %s%s\n", vLine, Bold, title, Reset)
+        // Remove duplicate CVE in the title if present
+        cve := v.CVE
+        title := v.Title
+        if cve != "" && strings.Contains(title, cve) {
+            title = strings.Replace(title, cve, "", 1)
+            title = strings.TrimSpace(title)
+            title = strings.TrimLeft(title, "[] ")
+        }
+        // Compose vulnerability heading
+        var vulnHeader string
+        if cve != "" {
+            vulnHeader = fmt.Sprintf("[%-14s] %s", cve, title)
+        } else {
+            vulnHeader = title
+        }
+        fmt.Printf("%s %s• %s%s\n", vLine, Bold, vulnHeader, Reset)
         fmt.Printf("%s    %sSeverity:%s %s%.1f%s\n", vLine, Bold, Reset, sevCol, v.CVSSScore, Reset)
         fmt.Printf("%s    %sDescription:%s %s\n", vLine, Bold, Reset, truncate(v.Description, 80))
         fmt.Printf("%s    %sReference:%s %s\n", vLine, Bold, Reset, v.Reference)
