@@ -75,7 +75,8 @@ Summary: 1 dependencies affected, 1 vulnerability found.
 <img width="1208" alt="image" src="https://github.com/user-attachments/assets/ec1d0461-d7d4-4df4-8db1-e673e4970c94" />
 
 **Newer Version**
-<img width="1320" alt="image" src="https://github.com/user-attachments/assets/cecaed91-b95a-4a9e-b913-dd6ae9c1c41a" />
+<img width="827" alt="image" src="https://github.com/user-attachments/assets/db77ba1f-a1b8-453f-b1b8-1ff2498c4dcb" />
+
 
 
 ---
