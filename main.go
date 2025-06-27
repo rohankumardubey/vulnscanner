@@ -11,13 +11,14 @@ import (
     "path/filepath"
     "regexp"
     "strings"
+    "unicode/utf8"
 
     "github.com/beevik/etree"
 )
 
 const ossIndexURL = "https://ossindex.sonatype.org/api/v3/component-report"
 
-// Output box drawing characters
+// Box drawing characters
 const (
     hLine  = "─"
     vLine  = "│"
@@ -38,7 +39,7 @@ var (
     Bold   = "\033[1m"
 )
 
-// Vulnerability and OSS Index types
+// Types
 type OSSIndexRequest struct {
     Coordinates []string `json:"coordinates"`
 }
@@ -71,29 +72,24 @@ func severityColor(score float64) string {
     }
 }
 
-// Helper: Truncate description for neat output
-func truncate(s string, l int) string {
-    if len(s) > l {
-        return s[:l] + "..."
+// Wrap a string into lines of max width (word boundaries)
+func wrapText(s string, width int) []string {
+    var lines []string
+    words := strings.Fields(s)
+    if len(words) == 0 {
+        return []string{""}
     }
-    return s
-}
-
-// Try to extract upgrade suggestion from description text
-func extractUpgradeSuggestion(desc string) string {
-    lower := strings.ToLower(desc)
-    patterns := []string{"upgrade to version ", "upgrade to ", "fixed in ", "update to version ", "use version "}
-    for _, p := range patterns {
-        idx := strings.Index(lower, p)
-        if idx != -1 {
-            after := lower[idx+len(p):]
-            words := strings.Fields(after)
-            if len(words) > 0 {
-                return "Upgrade to version " + words[0]
-            }
+    line := words[0]
+    for _, word := range words[1:] {
+        if utf8.RuneCountInString(line)+1+utf8.RuneCountInString(word) > width {
+            lines = append(lines, line)
+            line = word
+        } else {
+            line += " " + word
         }
     }
-    return ""
+    lines = append(lines, line)
+    return lines
 }
 
 // Print horizontal line for box
@@ -114,13 +110,59 @@ func printBLine(width int) {
     fmt.Println(br)
 }
 
-// Box printer for one dependency
-func printVulnBox(dep string, vulns []Vulnerability) {
-    width := 96 // adjust to your terminal
-    printHLine(width)
-    fmt.Printf("%s %-92s %s\n", vLine, Cyan+dep+Reset, vLine)
+// Print horizontal separator between vulnerabilities
+func printInnerHLine(width int) {
     fmt.Printf("%s%s%s\n", lJoint, strings.Repeat(hLine, width), rJoint)
-    for _, v := range vulns {
+}
+
+// Print a label/value row, with wrapping
+func printRowContent(width int, label, value, color string) {
+    wrapWidth := width - len(label) - 7 // 7: box, label padding, separator, space
+    wrapped := wrapText(value, wrapWidth)
+    for i, line := range wrapped {
+        if i == 0 {
+            fmt.Printf("%s   %s%s%-14s%s %s%s %s\n", vLine, Bold, color, label, Reset, line, Reset, vLine)
+        } else {
+            fmt.Printf("%s   %-16s %s%s %s\n", vLine, "", line, Reset, vLine)
+        }
+    }
+}
+
+// Try to extract upgrade suggestion from description text
+func extractUpgradeSuggestion(desc string) string {
+    lower := strings.ToLower(desc)
+    patterns := []string{"upgrade to version ", "upgrade to ", "fixed in ", "update to version ", "use version "}
+    for _, p := range patterns {
+        idx := strings.Index(lower, p)
+        if idx != -1 {
+            after := lower[idx+len(p):]
+            words := strings.Fields(after)
+            if len(words) > 0 {
+                return "Upgrade to version " + words[0]
+            }
+        }
+    }
+    return ""
+}
+
+// Truncate long description for consistent appearance
+func truncate(s string, l int) string {
+    if len(s) > l {
+        return s[:l] + "..."
+    }
+    return s
+}
+
+// Print a vulnerability box for one dependency
+func printVulnBox(dep string, vulns []Vulnerability) {
+    width := 100 // You can adjust this to your terminal width
+    printHLine(width)
+    depLines := wrapText(dep, width-2)
+    for _, l := range depLines {
+        fmt.Printf("%s %-*s %s\n", vLine, width-2, Cyan+l+Reset, vLine)
+    }
+    printInnerHLine(width)
+    for idx, v := range vulns {
         sevCol := severityColor(v.CVSSScore)
         // Remove duplicate CVE in the title if present
         cve := v.CVE
@@ -133,21 +175,35 @@ func printVulnBox(dep string, vulns []Vulnerability) {
         // Compose vulnerability heading
         var vulnHeader string
         if cve != "" {
-            vulnHeader = fmt.Sprintf("[%-14s] %s", cve, title)
+            vulnHeader = fmt.Sprintf("[%s] %s", cve, title)
         } else {
             vulnHeader = title
         }
-        fmt.Printf("%s %s• %s%s\n", vLine, Bold, vulnHeader, Reset)
-        fmt.Printf("%s    %sSeverity:%s %s%.1f%s\n", vLine, Bold, Reset, sevCol, v.CVSSScore, Reset)
-        fmt.Printf("%s    %sDescription:%s %s\n", vLine, Bold, Reset, truncate(v.Description, 80))
-        fmt.Printf("%s    %sReference:%s %s\n", vLine, Bold, Reset, v.Reference)
+        // Vulnerability header row (wraps if too long)
+        headerLines := wrapText(vulnHeader, width-8)
+        for i, hl := range headerLines {
+            if i == 0 {
+                fmt.Printf("%s • %s%s%s%s %s\n", vLine, Bold, hl, Reset, Reset, vLine)
+            } else {
+                fmt.Printf("%s   %s%s%s %s\n", vLine, Bold, hl, Reset, vLine)
+            }
+        }
+        // Severity
+        printRowContent(width, "Severity:", fmt.Sprintf("%.1f", v.CVSSScore), sevCol)
+        // Description
+        printRowContent(width, "Description:", truncate(v.Description, 200), "")
+        // Reference
+        printRowContent(width, "Reference:", v.Reference, "")
+        // Suggested Fix
         suggestion := extractUpgradeSuggestion(v.Description)
         if suggestion != "" {
-            fmt.Printf("%s    %sSuggested Fix:%s %s\n", vLine, Bold, Reset, suggestion)
+            printRowContent(width, "Suggested Fix:", suggestion, "")
         } else {
-            fmt.Printf("%s    %sSuggested Fix:%s Check latest version at reference URL.\n", vLine, Bold, Reset)
+            printRowContent(width, "Suggested Fix:", "Check latest version at reference URL.", "")
         }
-        fmt.Printf("%s\n", vLine)
+        if idx != len(vulns)-1 {
+            printInnerHLine(width)
+        }
     }
     printBLine(width)
 }
@@ -247,7 +303,7 @@ func printReport(results []OSSIndexResponse) {
     if vulnCount == 0 {
         fmt.Println(Cyan + "No known vulnerabilities found!" + Reset)
     } else {
-        fmt.Printf("%s\nSummary:%s %d dependencies affected, %d vulnerabilities found.\n\n",
+        fmt.Printf("%sSummary:%s %d dependencies affected, %d vulnerabilities found.\n\n",
             Bold, Reset, depCount, vulnCount)
     }
 }
