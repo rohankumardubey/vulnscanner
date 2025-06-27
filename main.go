@@ -17,6 +17,28 @@ import (
 
 const ossIndexURL = "https://ossindex.sonatype.org/api/v3/component-report"
 
+// Output box drawing characters
+const (
+    hLine  = "─"
+    vLine  = "│"
+    tl     = "┌"
+    tr     = "┐"
+    bl     = "└"
+    br     = "┘"
+    lJoint = "├"
+    rJoint = "┤"
+)
+
+// ANSI colors
+var (
+    Red    = "\033[31m"
+    Yellow = "\033[33m"
+    Cyan   = "\033[36m"
+    Reset  = "\033[0m"
+    Bold   = "\033[1m"
+)
+
+// Vulnerability and OSS Index types
 type OSSIndexRequest struct {
     Coordinates []string `json:"coordinates"`
 }
@@ -31,10 +53,93 @@ type Vulnerability struct {
 }
 
 type OSSIndexResponse struct {
-    Coordinates     string           `json:"coordinates"`
-    Vulnerabilities []Vulnerability  `json:"vulnerabilities"`
+    Coordinates     string          `json:"coordinates"`
+    Vulnerabilities []Vulnerability `json:"vulnerabilities"`
 }
 
+// Color helpers
+func severityColor(score float64) string {
+    switch {
+    case score >= 9:
+        return Red + Bold
+    case score >= 7:
+        return Red
+    case score >= 4:
+        return Yellow
+    default:
+        return Reset
+    }
+}
+
+// Helper: Truncate description for neat output
+func truncate(s string, l int) string {
+    if len(s) > l {
+        return s[:l] + "..."
+    }
+    return s
+}
+
+// Try to extract upgrade suggestion from description text
+func extractUpgradeSuggestion(desc string) string {
+    lower := strings.ToLower(desc)
+    patterns := []string{"upgrade to version ", "upgrade to ", "fixed in ", "update to version ", "use version "}
+    for _, p := range patterns {
+        idx := strings.Index(lower, p)
+        if idx != -1 {
+            after := lower[idx+len(p):]
+            words := strings.Fields(after)
+            if len(words) > 0 {
+                return "Upgrade to version " + words[0]
+            }
+        }
+    }
+    return ""
+}
+
+// Print horizontal line for box
+func printHLine(width int) {
+    fmt.Print(tl)
+    for i := 0; i < width; i++ {
+        fmt.Print(hLine)
+    }
+    fmt.Println(tr)
+}
+
+// Print bottom line for box
+func printBLine(width int) {
+    fmt.Print(bl)
+    for i := 0; i < width; i++ {
+        fmt.Print(hLine)
+    }
+    fmt.Println(br)
+}
+
+// Box printer for one dependency
+func printVulnBox(dep string, vulns []Vulnerability) {
+    width := 96 // adjust to your terminal
+    printHLine(width)
+    fmt.Printf("%s %-92s %s\n", vLine, Cyan+dep+Reset, vLine)
+    fmt.Printf("%s%s%s\n", lJoint, strings.Repeat(hLine, width), rJoint)
+    for _, v := range vulns {
+        sevCol := severityColor(v.CVSSScore)
+        // Title, Severity, CVE on one line
+        title := fmt.Sprintf("[%-14s] %-44s", v.CVE, v.Title)
+        fmt.Printf("%s %s• %s%s\n", vLine, Bold, title, Reset)
+        fmt.Printf("%s    %sSeverity:%s %s%.1f%s\n", vLine, Bold, Reset, sevCol, v.CVSSScore, Reset)
+        fmt.Printf("%s    %sDescription:%s %s\n", vLine, Bold, Reset, truncate(v.Description, 80))
+        fmt.Printf("%s    %sReference:%s %s\n", vLine, Bold, Reset, v.Reference)
+        suggestion := extractUpgradeSuggestion(v.Description)
+        if suggestion != "" {
+            fmt.Printf("%s    %sSuggested Fix:%s %s\n", vLine, Bold, Reset, suggestion)
+        } else {
+            fmt.Printf("%s    %sSuggested Fix:%s Check latest version at reference URL.\n", vLine, Bold, Reset)
+        }
+        fmt.Printf("%s\n", vLine)
+    }
+    printBLine(width)
+}
+
+// Parse go.mod for dependencies
 func parseGoMod(goModPath string) ([]string, error) {
     f, err := os.Open(goModPath)
     if err != nil {
@@ -70,6 +175,7 @@ func parseGoMod(goModPath string) ([]string, error) {
     return pkgs, nil
 }
 
+// Parse pom.xml for Maven dependencies
 func parsePomXML(pomPath string) ([]string, error) {
     doc := etree.NewDocument()
     if err := doc.ReadFromFile(pomPath); err != nil {
@@ -89,6 +195,7 @@ func parsePomXML(pomPath string) ([]string, error) {
     return pkgs, nil
 }
 
+// Query OSS Index for vulnerabilities
 func checkVulnerabilities(coords []string) ([]OSSIndexResponse, error) {
     reqBody, err := json.Marshal(OSSIndexRequest{Coordinates: coords})
     if err != nil {
@@ -112,26 +219,27 @@ func checkVulnerabilities(coords []string) ([]OSSIndexResponse, error) {
     return result, nil
 }
 
+// Print overall report
 func printReport(results []OSSIndexResponse) {
-    vulnFound := false
+    vulnCount := 0
+    depCount := 0
+
     for _, r := range results {
         if len(r.Vulnerabilities) > 0 {
-            vulnFound = true
-            fmt.Printf("\n[!] Vulnerabilities found for %s:\n", r.Coordinates)
-            for _, v := range r.Vulnerabilities {
-                fmt.Printf("  - %s\n", v.Title)
-                fmt.Printf("    CVE: %s\n", v.CVE)
-                fmt.Printf("    Severity: %.1f\n", v.CVSSScore)
-                fmt.Printf("    Description: %.120s...\n", v.Description)
-                fmt.Printf("    More info: %s\n\n", v.Reference)
-            }
+            depCount++
+            printVulnBox(r.Coordinates, r.Vulnerabilities)
+            vulnCount += len(r.Vulnerabilities)
         }
     }
-    if !vulnFound {
-        fmt.Println("No known vulnerabilities found!")
+    if vulnCount == 0 {
+        fmt.Println(Cyan + "No known vulnerabilities found!" + Reset)
+    } else {
+        fmt.Printf("%s\nSummary:%s %d dependencies affected, %d vulnerabilities found.\n\n",
+            Bold, Reset, depCount, vulnCount)
     }
 }
 
+// Entry point
 func main() {
     if len(os.Args) < 3 {
         fmt.Println("Usage: vulnscanner <language> <path_to_project>")
