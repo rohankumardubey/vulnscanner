@@ -70,6 +70,7 @@ Parsing java → found 5 dependencies. Checking vulnerabilities...
 
 Summary: 1 dependencies affected, 1 vulnerability found.
 ```
+<img width="1208" alt="image" src="https://github.com/user-attachments/assets/ec1d0461-d7d4-4df4-8db1-e673e4970c94" />
 
 ---
 
